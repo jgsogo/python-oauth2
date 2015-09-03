@@ -21,22 +21,28 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
+from __future__ import absolute_import
 
+import sys
 import base64
 import urllib
 import time
 import random
-import urlparse
 import hmac
 import binascii
 import httplib2
 
 try:
-    from urlparse import parse_qs
-    parse_qs # placate pyflakes
+    from urllib.parse import urlparse, urlunparse, urlsplit, urlunsplit, parse_qs, quote, urlencode, splittype, splithost
 except ImportError:
-    # fall back for Python 2.5
-    from cgi import parse_qs
+    # fall back for Python 2.x
+    from urlparse import urlparse, urlunparse, urlsplit, urlunsplit, urlencode
+    from urllib import quote, splittype, splithost
+    try:
+        from urlparse import parse_qs
+    except ImportError:
+        # fall back for Python 2.5
+        from cgi import parse_qs
 
 try:
     from hashlib import sha1
@@ -45,7 +51,7 @@ except ImportError:
     # hashlib was added in Python 2.5
     import sha
 
-import _version
+from . import _version
 
 __version__ = _version.__version__
 
@@ -87,7 +93,7 @@ def build_xoauth_string(url, consumer, token=None):
     request.sign_request(signing_method, consumer, token)
 
     params = []
-    for k, v in sorted(request.iteritems()):
+    for k, v in sorted(request.items()):
         if v is not None:
             params.append('%s="%s"' % (k, escape(v)))
 
@@ -97,28 +103,35 @@ def build_xoauth_string(url, consumer, token=None):
 def to_unicode(s):
     """ Convert to unicode, raise exception with instructive error
     message if s is not unicode, ascii, or utf-8. """
-    if not isinstance(s, unicode):
-        if not isinstance(s, str):
-            raise TypeError('You are required to pass either unicode or string here, not: %r (%s)' % (type(s), s))
-        try:
-            s = s.decode('utf-8')
-        except UnicodeDecodeError, le:
-            raise TypeError('You are required to pass either a unicode object or a utf-8 string here. You passed a Python string object which contained non-utf-8: %r. The UnicodeDecodeError that resulted from attempting to interpret it as utf-8 was: %s' % (s, le,))
-    return s
+    # TODO: Improve implementation :/
+    if sys.version_info > (3, 0):
+        if isinstance(s, str):
+            return s
+        else:
+            raise TypeError('You are required to pass a string here, not: %r (%s)' % (type(s), s))
+    else:        
+        if not isinstance(s, unicode):
+            if not isinstance(s, str):
+                raise TypeError('You are required to pass either unicode or string here, not: %r (%s)' % (type(s), s))
+            try:
+                s = s.decode('utf-8')
+            except UnicodeDecodeError as le:
+                raise TypeError('You are required to pass either a unicode object or a utf-8 string here. You passed a Python string object which contained non-utf-8: %r. The UnicodeDecodeError that resulted from attempting to interpret it as utf-8 was: %s' % (s, le,))
+        return s
 
 def to_utf8(s):
     return to_unicode(s).encode('utf-8')
 
 def to_unicode_if_string(s):
-    if isinstance(s, basestring):
+    try:
         return to_unicode(s)
-    else:
+    except TypeError:
         return s
 
 def to_utf8_if_string(s):
-    if isinstance(s, basestring):
+    try:
         return to_utf8(s)
-    else:
+    except TypeError:
         return s
 
 def to_unicode_optional_iterator(x):
@@ -126,12 +139,14 @@ def to_unicode_optional_iterator(x):
     Raise TypeError if x is a str containing non-utf8 bytes or if x is
     an iterable which contains such a str.
     """
-    if isinstance(x, basestring):
+    try:
         return to_unicode(x)
+    except TypeError:
+        pass
 
     try:
         l = list(x)
-    except TypeError, e:
+    except TypeError as e:
         assert 'is not iterable' in str(e)
         return x
     else:
@@ -142,12 +157,14 @@ def to_utf8_optional_iterator(x):
     Raise TypeError if x is a str or if x is an iterable which
     contains a str.
     """
-    if isinstance(x, basestring):
+    try:
         return to_utf8(x)
-
+    except TypeError:
+        pass
+            
     try:
         l = list(x)
-    except TypeError, e:
+    except TypeError as e:
         assert 'is not iterable' in str(e)
         return x
     else:
@@ -155,7 +172,7 @@ def to_utf8_optional_iterator(x):
 
 def escape(s):
     """Escape a URL including any /."""
-    return urllib.quote(s.encode('utf-8'), safe='~')
+    return quote(s.encode('utf-8'), safe='~')
 
 def generate_timestamp():
     """Get seconds since epoch (UTC)."""
@@ -250,13 +267,13 @@ class Token(object):
     def get_callback_url(self):
         if self.callback and self.verifier:
             # Append the oauth_verifier.
-            parts = urlparse.urlparse(self.callback)
+            parts = urlparse(self.callback)
             scheme, netloc, path, params, query, fragment = parts[:6]
             if query:
                 query = '%s&oauth_verifier=%s' % (query, self.verifier)
             else:
                 query = 'oauth_verifier=%s' % self.verifier
-            return urlparse.urlunparse((scheme, netloc, path, params,
+            return urlunparse((scheme, netloc, path, params,
                 query, fragment))
         return self.callback
 
@@ -345,7 +362,7 @@ class Request(dict):
             self.url = to_unicode(url)
         self.method = method
         if parameters is not None:
-            for k, v in parameters.iteritems():
+            for k, v in parameters.items():
                 k = to_unicode(k)
                 v = to_unicode_optional_iterator(v)
                 self[k] = v
@@ -357,7 +374,7 @@ class Request(dict):
     def url(self, value):
         self.__dict__['url'] = value
         if value is not None:
-            scheme, netloc, path, query, fragment = urlparse.urlsplit(value)
+            scheme, netloc, path, query, fragment = urlsplit(value)
 
             # Exclude default port numbers.
             if scheme == 'http' and netloc[-3:] == ':80':
@@ -368,7 +385,7 @@ class Request(dict):
                 raise ValueError("Unsupported URL %s (%s)." % (value, scheme))
 
             # Normalized URL excludes params, query, and fragment.
-            self.normalized_url = urlparse.urlunsplit((scheme, netloc, path, None, None))
+            self.normalized_url = urlunsplit((scheme, netloc, path, None, None))
         else:
             self.normalized_url = None
             self.__dict__['url'] = None
@@ -382,7 +399,7 @@ class Request(dict):
  
     def get_nonoauth_parameters(self):
         """Get any non-OAuth parameters."""
-        return dict([(k, v) for k, v in self.iteritems() 
+        return dict([(k, v) for k, v in self.items() 
                     if not k.startswith('oauth_')])
  
     def to_header(self, realm=''):
@@ -402,17 +419,17 @@ class Request(dict):
     def to_postdata(self):
         """Serialize as post data for a POST request."""
         d = {}
-        for k, v in self.iteritems():
+        for k, v in self.items():
             d[k.encode('utf-8')] = to_utf8_optional_iterator(v)
 
         # tell urlencode to deal with sequence values and map them correctly
         # to resulting querystring. for example self["k"] = ["v1", "v2"] will
         # result in 'k=v1&k=v2' and not k=%5B%27v1%27%2C+%27v2%27%5D
-        return urllib.urlencode(d, True).replace('+', '%20')
+        return urlencode(d, True).replace('+', '%20')
  
     def to_url(self):
         """Serialize as a URL for a GET request."""
-        base_url = urlparse.urlparse(self.url)
+        base_url = urlparse(self.url)
         try:
             query = base_url.query
         except AttributeError:
@@ -437,8 +454,8 @@ class Request(dict):
             fragment = to_utf8(base_url[5])
 
         url = (scheme, netloc, path, params,
-               urllib.urlencode(query, True), fragment)
-        return urlparse.urlunparse(url)
+               urlencode(query, True).encode('utf-8'), fragment)
+        return urlunparse(url)
 
     def get_parameter(self, parameter):
         ret = self.get(parameter)
@@ -450,31 +467,31 @@ class Request(dict):
     def get_normalized_parameters(self):
         """Return a string that contains the parameters that must be signed."""
         items = []
-        for key, value in self.iteritems():
+        for key, value in self.items():
             if key == 'oauth_signature':
                 continue
             # 1.0a/9.1.1 states that kvp must be sorted by key, then by value,
             # so we unpack sequence values into multiple items for sorting.
-            if isinstance(value, basestring):
+            if isinstance(value, str) or (sys.version_info < (3, 0) and isinstance(value, unicode)):
                 items.append((to_utf8_if_string(key), to_utf8(value)))
             else:
                 try:
                     value = list(value)
-                except TypeError, e:
+                except TypeError as e:
                     assert 'is not iterable' in str(e)
                     items.append((to_utf8_if_string(key), to_utf8_if_string(value)))
                 else:
                     items.extend((to_utf8_if_string(key), to_utf8_if_string(item)) for item in value)
 
         # Include any query string parameters from the provided URL
-        query = urlparse.urlparse(self.url)[4]
+        query = urlparse(self.url)[4]
 
         url_items = self._split_url_string(query).items()
         url_items = [(to_utf8(k), to_utf8_optional_iterator(v)) for k, v in url_items if k != 'oauth_signature' ]
         items.extend(url_items)
 
         items.sort()
-        encoded_str = urllib.urlencode(items, True)
+        encoded_str = urlencode(items, True)
         # Encode signature parameters per Oauth Core 1.0 protocol
         # spec draft 7, section 3.6
         # (http://tools.ietf.org/html/draft-hammer-oauth-07#section-3.6)
@@ -490,7 +507,7 @@ class Request(dict):
             # section 4.1.1 "OAuth Consumers MUST NOT include an
             # oauth_body_hash parameter on requests with form-encoded
             # request bodies."
-            self['oauth_body_hash'] = base64.b64encode(sha(self.body).digest())
+            self['oauth_body_hash'] = base64.b64encode(sha(self.body.encode('utf-8')).digest())
 
         if 'oauth_consumer_key' not in self:
             self['oauth_consumer_key'] = consumer.key
@@ -543,7 +560,7 @@ class Request(dict):
             parameters.update(query_params)
  
         # URL parameters.
-        param_str = urlparse.urlparse(http_url)[4] # query
+        param_str = urlparse(http_url)[4] # query
         url_params = cls._split_url_string(param_str)
         parameters.update(url_params)
  
@@ -612,7 +629,7 @@ class Request(dict):
     def _split_url_string(param_str):
         """Turn URL string into parameters."""
         parameters = parse_qs(param_str.encode('utf-8'), keep_blank_values=True)
-        for k, v in parameters.iteritems():
+        for k, v in parameters.items():
             if len(v) == 1:
                 parameters[k] = urllib.unquote(v[0])
             else:
@@ -668,12 +685,12 @@ class Client(httplib2.Http):
 
         req.sign_request(self.method, self.consumer, self.token)
 
-        schema, rest = urllib.splittype(uri)
+        schema, rest = splittype(uri)
         if rest.startswith('//'):
             hierpart = '//'
         else:
             hierpart = ''
-        host, rest = urllib.splithost(rest)
+        host, rest = splithost(rest)
 
         realm = schema + ':' + hierpart + host
 
@@ -844,7 +861,10 @@ class SignatureMethod_HMAC_SHA1(SignatureMethod):
         """Builds the base signature string."""
         key, raw = self.signing_base(request, consumer, token)
 
-        hashed = hmac.new(key, raw, sha)
+        if sys.version_info < (3, 0):
+            hashed = hmac.new(key, raw, sha)
+        else:
+            hashed = hmac.new(key.encode('utf-8'), raw.encode('utf-8'), sha)
 
         # Calculate the digest base 64.
         return binascii.b2a_base64(hashed.digest())[:-1]
